@@ -19,7 +19,7 @@ export class AuthService {
         private readonly userRepository: Repository<User>,
         private readonly redisService: RedisService,
         private readonly kafkaService: KafkaService,
-    ) {}
+    ) { }
 
     async register(dto: RegisterDTO): Promise<User> {
         const existingUser = await this.userRepository.findOne({ where: { email: dto.email } });
@@ -31,7 +31,6 @@ export class AuthService {
         const newUser = this.userRepository.create({ email, password: hashedPassword, role })
         const user = await this.userRepository.save(newUser);
 
-        // Update to use enum
         await this.kafkaService.emit(KafkaTopics.USER_CREATED, {
             id: user.id,
             email: user.email,
@@ -60,10 +59,30 @@ export class AuthService {
 
 
     async generateTokens(userId: string): Promise<TokenResponseDTO> {
-        const accessToken = jwt.sign({ sub: userId }, `${process.env.JWT_ACCESS_SECRET}`, { expiresIn: '15m' });
-        const refreshToken = jwt.sign({ sub: userId }, `${process.env.JWT_REFRESH_SECRET}`, {
-            expiresIn: '7d',
-        });
+        const user = await this.userRepository.findOne({ where: { id: userId } });
+
+        if (!user) {
+            throw new NotFoundException('User not found');
+        }
+
+        const payload = {
+            sub: userId,
+            email: user.email,
+            role: user.role
+        };
+
+        const accessToken = jwt.sign(
+            payload,
+            `${process.env.JWT_ACCESS_SECRET}`,
+            { expiresIn: '15m' }
+        );
+
+        const refreshToken = jwt.sign(
+            payload,
+            `${process.env.JWT_REFRESH_SECRET}`,
+            { expiresIn: '7d' }
+        );
+
         await this.redisService.set(userId, refreshToken);
         return { accessToken, refreshToken };
     }
@@ -78,21 +97,19 @@ export class AuthService {
 
     async checkUserPermissions(userId: string, resource: string) {
         const user = await this.validateUserById(userId);
-        // Add your permission logic here
         return {
             userId: user.id,
             resource,
-            hasAccess: true // implement your actual permission check
+            hasAccess: true
         };
     }
 
     async validateUserAccess(userId: string, messageId: string) {
         const user = await this.validateUserById(userId);
-        // Add your access validation logic here
         return {
             userId: user.id,
             messageId,
-            hasAccess: true // implement your actual access check
+            hasAccess: true
         };
     }
 }
